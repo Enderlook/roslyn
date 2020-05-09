@@ -13,6 +13,16 @@ namespace Microsoft.CodeAnalysis.CSharp.Utilities
         public static readonly IComparer<SyntaxToken> NormalInstance = new TokenComparer(specialCaseSystem: false);
         public static readonly IComparer<SyntaxToken> SystemFirstInstance = new TokenComparer(specialCaseSystem: true);
 
+        private static readonly string[] s_specialPriorities = new string[]
+        {
+            // Determines the order of special namespaces. They will be placed at the top.
+            nameof(System),
+            nameof(Microsoft),
+            // We can't use nameof() because they don't exist in current context.
+            "Windows",
+            "Xamarin",
+        };
+
         private readonly bool _specialCaseSystem;
 
         private TokenComparer(bool specialCaseSystem)
@@ -20,20 +30,52 @@ namespace Microsoft.CodeAnalysis.CSharp.Utilities
 
         public int Compare(SyntaxToken x, SyntaxToken y)
         {
+            // Check if we must handle some namespaces with more priority than others
             if (_specialCaseSystem &&
                 x.GetPreviousToken(includeSkipped: true).IsKind(SyntaxKind.UsingKeyword, SyntaxKind.StaticKeyword) &&
                 y.GetPreviousToken(includeSkipped: true).IsKind(SyntaxKind.UsingKeyword, SyntaxKind.StaticKeyword))
             {
-                var token1IsSystem = x.ValueText == nameof(System);
-                var token2IsSystem = y.ValueText == nameof(System);
+                var token1Text = x.ValueText;
+                var token2Text = y.ValueText;
+                // We iterate over special priorities to check if this token is a choosen one
+                for (var i = 0; i < s_specialPriorities.Length; i++)
+                {
+                    if (s_specialPriorities[i] == token1Text)
+                    {
+                        // If it's a choosen one we must check if the other token is also special
+                        // However, we only need to check up to i. If it's greater than i, the second token has a lower priority
+                        // Note: lower values means higher priority                        
+                        for (var j = 0; j < i; j++)
+                        {
+                            if (s_specialPriorities[j] == token2Text)
+                            {
+                                // At this point we know that the second token has a higher priority than the first one
+                                return 1;
+                            }
+                        }
 
-                if (token1IsSystem && !token2IsSystem)
-                {
-                    return -1;
+                        // The second token doesn't have a higher priority than the first one, but it may have the same priority
+                        // At this point this is true: i == j
+                        if (s_specialPriorities[i] == token2Text)
+                        {
+                            // At this point both tokens has same priority
+                            return 0;
+                        }
+                        else
+                        {
+                            // At this point we know than the second token has a lower priority than the first one
+                            return -1;
+                        }
+                    }
                 }
-                else if (!token1IsSystem && token2IsSystem)
+
+                // At this point the first token in not special, but the second may still be special
+                for (var i = 0; i < s_specialPriorities.Length; i++)
                 {
-                    return 1;
+                    if (s_specialPriorities[i] == token2Text)
+                    {
+                        return 1;
+                    }
                 }
             }
 
