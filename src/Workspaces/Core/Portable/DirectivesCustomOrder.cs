@@ -3,7 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Collections.Immutable;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.CodeAnalysis.PooledObjects;
 
@@ -14,163 +14,157 @@ namespace Microsoft.CodeAnalysis.Editing
         /// <summary>
         /// Pattern used to match any pattern.
         /// </summary>
-        private const string JOKER = "*";
+        private const char JOKER = '*';
 
         /// <summary>
         /// Pattern used to split names.
         /// </summary>
-        private const string DELIMITER = ".";
+        private const char DELIMITER = '.';
 
         /// <summary>
         /// Pattern used to determine the amount of newlines between each matching group.
         /// </summary>
-        private const string SEPARATOR = "\n";
+        private const char SEPARATOR = ';';
+
+        private Node node;
 
         internal static Optional<DirectivesCustomOrder> Parse(string args)
         {
             var patterns = ProcessImportDirectivesCustomOrder(args.AsMemory());
 
-            return default;
-        }
+            if (patterns is null)
+                return new Optional<DirectivesCustomOrder>();
 
-        /// <summary>
-        /// Check if <paramref name="toMatch"/> can be found in <paramref name="text"/> starting at index <paramref name="startIndex"/>.
-        /// </summary>
-        /// <param name="text"></param>
-        /// <param name="startIndex"></param>
-        /// <param name="toMatch"></param>
-        /// <returns>Whenever <paramref name="toMatch"/> can be found in <paramref name="text"/> starting at index <paramref name="startIndex"/>.</returns>
-        private static bool MatchFromIndex(ReadOnlySpan<char> text, int startIndex, string toMatch)
-        {
-            Debug.Assert(startIndex >= 0, $"{nameof(startIndex)} can not be negative.");
-            Debug.Assert(text.Length > startIndex, $"{nameof(startIndex)} must be lower than {nameof(text)}.Length.");
-            Debug.Assert(toMatch != null, $"{toMatch} can not be null.");
-            for (var j = 0; j < toMatch.Length; j++)
+            var configuration = new DirectivesCustomOrder
             {
-                var i = startIndex + j;
-                if (i >= text.Length)
-                    return false;
+                node = new Node()
+            };
 
-                if (text[i] != toMatch[j])
-                    return false;
+            foreach (var kv in patterns)
+            {
+                configuration.node.AddNode(kv.Key.AsMemory(), kv.Value, 0);
             }
-            return true;
+
+            return new Optional<DirectivesCustomOrder>(configuration);
         }
 
-        private static PooledDictionary<ReadOnlyMemory<char>, (int lines, int order)> ProcessImportDirectivesCustomOrder(ReadOnlyMemory<char> importDirectivesCustomOrder)
+        private static PooledDictionary<string, int> ProcessImportDirectivesCustomOrder(ReadOnlyMemory<char> importDirectivesCustomOrder)
         {
             // Note: for the purpose of the documentation of this method and its examples
-            // we consider that JOKER is "*", DELIMITER is "." and SEPARATOR is "\n".
-            // A joker pattern is pattern which only contains JOKER, such as "*"
+            // we consider that JOKER is '*', DELIMITER is '.' and SEPARATOR is ';'.
+            //
+            // A joker pattern is a pattern which only contains JOKER, such as "*"
             //
             // Additionally, an input configuration can be split in the following parts (EBNF):
-            // patternGroup = [{name, DELIMITER}, name, DELIMITER], JOKER;
-            // configuration = {SEPARATOR}, {patternGroup, SEPARATOR, {SEPARATOR}}, [patternGroup], {SEPARATOR}
+            // patternGroup = name, {DELIMITER, name}
+            // configuration = { whitespace }, [patternGroup], {{ whitespace }, SEPARATOR, { whitespace }, patternGroup}, { whitespace }
             // Examples:
-            // "\n\n\nSystem.Collection.Generic.*\nMicrosoft.*\nWindows.*\n\n*\n\nXamarin.*\n\n"
-            // "*"
-            // "System.*\nMicrosoft.*\n\nSystem.IO.*"
-            // "System.Collection.Generic.List<int>.*"
+            // "  System;Microsoft.Xyz;Microsoft;*;Xamarin"
+            // "System  ;  Microsoft.Xyz  ;  Microsoft  ;  *  ;  Xamarin"
+            // "*  "
+            // "System.Collection.Generic.List<int>"
+            // ""
+            // "   "
             //
-            // Note that no pattern group can be duplirepeatedcate:
-            // "System.*\nMicrosoft.*\nWindows.*\nSystem.*"
-            //  ^^^^^^^^                          ^^^^^^^^
+            // Rules:
             //
-            // Finally, if the joker pattern is not found, we must add it to the end (prepended by a SEPARATOR)
-            // ignoring any other leading SEPARATORs
+            // No pattern group can be duplicated:
+            // "System ; Microsoft ; Windows ; System"
+            //  ^^^^^^                         ^^^^^^
+            //
+            // name can't be empty nor be whitespace:
+            // "System ; Microsoft ; ; Windows"
+            //                      ^
+            // "System ; Microsoft ;; Windows"
+            //                     ^^
+            //
+            // Whitespaces are not allowed inside a patternGroup
+            // "System . Coll ections ; Microsoft ; Windows"
+            //        ^ ^    ^
+            // The same for JOKER
+            // "System*.*Coll*ections ; Microsoft ; Windows"
+            //        ^ ^    ^
+            //
+            // Whitespaces are defined by char.IsWhiteSpace(character)
+            //
+            // If the joker pattern is not found, we must add it to the end
             // Example:
-            // "System.*\n\n\n\n" -> "System.*\n*"
-            // "Microsoft.*" -> "Microsoft.*\n*"
+            // "System" -> "System;*"
+            // "System ; Microsoft ; Windows" -> "System ; Microsoft ; Windows;*"
+
+            var patterns = PooledDictionary<string, int>.GetInstance();
 
             var importDirectivesCustomOrderSpan = importDirectivesCustomOrder.Span;
 
-            var i = 0;
-            // Ignore trailing separators
-            // Example:
-            // "\n\n\nSystem.*\nMicrosoft.*\nWindows.*\n\n*\n\nXamarin.*" -> "System.*\nMicrosoft.*\nWindows.*\n\n*\n\nXamarin.*"
-            while (MatchFromIndex(importDirectivesCustomOrderSpan, i, SEPARATOR))
-            {
-                i += SEPARATOR.Length;
-            }
-
-            var patterns = PooledDictionary<ReadOnlyMemory<char>, (int lines, int order)>.GetInstance();
-
-            var startIndex = i;
+            var startIndex = 0;
             var order = 0;
             ReadOnlyMemory<char> pattern;
-            ReadOnlyMemory<char> lastFoundPattern = default;
+
             // Whenever a joker pattern was found in the user provided configuration
             var foundJoker = false;
-            while (i < importDirectivesCustomOrder.Length)
+
+            for (var i = 0; i < importDirectivesCustomOrderSpan.Length; i++)
             {
                 // Check if we are facing the end of a pattern group
-                if (MatchFromIndex(importDirectivesCustomOrderSpan, i, SEPARATOR))
+                if (importDirectivesCustomOrderSpan[i] == SEPARATOR)
                 {
                     var length = i - startIndex;
-                    Debug.Assert(length > 0, "A pattern can not be empty.");
 
-                    i += SEPARATOR.Length;
+                    // Pattern can't be empty
+                    // "System ; Microsoft ;; Windows"
+                    //                     ^^
+                    if (length == 0)
+                        return null;
 
                     pattern = importDirectivesCustomOrder.Slice(startIndex, length);
                     var patternSpan = pattern.Span;
 
-                    // The last characters of a pattern must always be a JOKER
-                    // Example:
-                    // System.IO.*
-                    //           ^
-                    // *
-                    // ^
-                    if (!MatchFromIndex(patternSpan, pattern.Length - JOKER.Length, JOKER))
-                    {
-                        return null;
-                    }
-
-                    // If pattern has the same length as JOKER it must be a joker pattern.
-                    // We know that because we checked above if it ends with the same characters,
-                    // and now we would also know that it has the same length.
-                    if (pattern.Length == JOKER.Length)
+                    // Check if it's a joker pattern
+                    if (patternSpan.Length == 1 && patternSpan[0] == JOKER)
                     {
                         foundJoker = true;
                     }
                     else
                     {
-                        // So, if this is not a joker pattern, we must check additional requisites
+                        // Trim whitespace
+                        var start = 0;
+                        for (; start < patternSpan.Length && char.IsWhiteSpace(patternSpan[start]); start++)
+                            ;
 
-                        // Previous to the JOKER there must be a DELIMITER
+                        // A pattern can't be only whitespaces nor empty
+                        // "  "
+                        //  ^^
+                        if (start == patternSpan.Length)
+                            return null;
+
+                        var end = patternSpan.Length - 1;
+                        for (; end > 0 && char.IsWhiteSpace(patternSpan[end]); end--)
+                            ;
+
+                        pattern = pattern[start..(end + 1)];
+                        patternSpan = pattern.Span;
+
+                        // Since this is not a joker pattern we must check additional requisites
+
+                        // In the middle of a pattern, multiple DELIMITERs are not allowed, nor any JOKER not whitespace
                         // Example:
-                        // System.IO.*
-                        //          ^
-                        if (!MatchFromIndex(patternSpan, pattern.Length - JOKER.Length - DELIMITER.Length, DELIMITER))
-                        {
-                            return null;
-                        }
-
-                        // Previous to the DELIMITER (which is previous to the JOKER) there must be something
-                        // Example
-                        // System.*
-                        //      ^
-                        if (pattern.Length == JOKER.Length + DELIMITER.Length)
-                        {
-                            return null;
-                        }
-
+                        // System..IO
+                        //       ^^
+                        // System.*.IO
+                        //        ^
+                        // Sy stem. Coll*ction
+                        //   ^     ^    ^
+                        // System*. .Collection
+                        //       ^ ^
                         var foundDelimiter = false;
-                        for (var j = 0; j < pattern.Length - JOKER.Length - DELIMITER.Length; j++)
+                        for (var j = 0; j < pattern.Length; j++)
                         {
-                            // In the middle of a pattern, multiple DELIMITERs are not allowed, nor any JOKER
-                            // Example:
-                            // System..IO.*
-                            //        ^
-                            // System.*.IO.*
-                            //        ^
-                            // System.Coll*ction
-                            //            ^
-                            if (MatchFromIndex(patternSpan, j, JOKER))
+                            if (patternSpan[j] == JOKER || char.IsWhiteSpace(patternSpan[j]))
                             {
                                 return null;
                             }
 
-                            if (MatchFromIndex(patternSpan, j, SEPARATOR))
+                            if (patternSpan[j] == DELIMITER)
                             {
                                 if (foundDelimiter)
                                 {
@@ -181,49 +175,36 @@ namespace Microsoft.CodeAnalysis.Editing
                                     foundDelimiter = true;
                                 }
                             }
+                            else
+                            {
+                                foundDelimiter = false;
+                            }
                         }
                     }
 
                     // We don't allow duplicated entries
                     // Example:
-                    // "System.*\nMicrosoft.*\nWindows.*\nSystem.*"
-                    //  ^^^^^^^^                          ^^^^^^^^
-                    // "*\nSystem.*\n*Microsoft.*"
-                    //  ^            ^
-                    if (patterns.ContainsKey(pattern))
+                    // "System;*;Microsoft;*"
+                    //         ^           ^
+                    // "System;Microsoft;Windows;System"
+                    //  ^^^^^^                   ^^^^^^
+                    var stringPattern = pattern.ToString();
+                    if (patterns.ContainsKey(stringPattern))
                         return null;
+                    else
+                        patterns.Add(stringPattern, order++);
 
-                    // We calculate how many SEPARATORs are between this pattern and the next
-                    var lines = 0;
-                    while (i < importDirectivesCustomOrder.Length && MatchFromIndex(importDirectivesCustomOrderSpan, i, SEPARATOR))
-                    {
-                        lines++;
-                        i += SEPARATOR.Length;
-                    }
-                    patterns.Add(pattern, (lines, order++));
-                    startIndex = i;
-                    lastFoundPattern = pattern;
-                }
-                else
-                {
-                    i++;
+                    // + 1 to exclude the SEPARATOR from the next pattern
+                    startIndex = i + 1;
                 }
             }
 
-            // We update the last found pattern to remove any leading newlines:
-            // Example:
-            // "System.*\nMicrosoft.*\nWindows.*\n\n*\n\nXamarin.*\n\n\n" -> "System.*\nMicrosoft.*\nWindows.*\n\n*\n\nXamarin.*"
-            if (patterns.TryGetValue(lastFoundPattern, out var tuple))
-            {
-                tuple.lines = 0;
-                patterns[lastFoundPattern] = tuple;
-            }
-
-            // Additionally we add the joker pattern if this wasn't provided by the user
+            // If not joker pattern was found we add one
             if (!foundJoker)
             {
-                // If that pattern isn't found, we add it with a fake priority (higher values goes to the bottom).
-                patterns.Add(JOKER.AsMemory(), (1, int.MaxValue));
+                // If that pattern isn't found, we add it.
+                // This will have a higher order than the last pattern, which means it will go to the bottom.
+                patterns.Add(JOKER.ToString(), order);
             }
 
             Debug.Assert(patterns.Count > 0, "Patterns can't be empty.");
@@ -233,6 +214,113 @@ namespace Microsoft.CodeAnalysis.Editing
         internal static string Serialize(DirectivesCustomOrder arg)
         {
             throw new NotImplementedException();
+        }
+
+        private class Node
+        {
+            private List<Node> _nodes;
+
+            public readonly ReadOnlyMemory<char> pattern;
+
+            private int _order;
+
+            private bool _isTerminal;
+
+            private Node(ReadOnlyMemory<char> pattern)
+            {
+                this.pattern = pattern;
+                _isTerminal = false;
+            }
+
+            private Node(ReadOnlyMemory<char> pattern, int order) : this(pattern)
+            {
+                _order = order;
+                _isTerminal = true;
+            }
+
+            public Node()
+            {
+            }
+
+            public void AddNode(ReadOnlyMemory<char> patternGroup, int order, int startIndex)
+            {
+                Debug.Assert(startIndex <= patternGroup.Length, $"{nameof(startIndex)} can not be higher than {nameof(patternGroup)}.Length.");
+
+                // If we already reached the end of patternGroup there is nothing we can do
+                if (startIndex == patternGroup.Length)
+                    return;
+
+                var pattern = GetPattern(patternGroup, startIndex);
+                // +1 due DELIMITER length
+                startIndex += pattern.Length + 1;
+
+                var patternSpan = pattern.Span;
+
+                if (_nodes is null)
+                {
+                    _nodes = new List<Node>();
+                }
+                else
+                {
+                    for (var i = 0; i < _nodes.Count; i++)
+                    {
+                        var child = _nodes[i];
+                        if (patternSpan.SequenceEqual(child.pattern.Span))
+                        {
+                            // If we still have patterns we must add a new node
+                            // Otherwise we must edit the last matched node to turn it into terminal
+                            // We use > instead of == due to DELIMITER length ((startIndex - 1) == patternGroup.Length)
+                            if (startIndex > patternGroup.Length)
+                            {
+                                // At this point we are not adding a new node but turning into terminal one
+                                Debug.Assert(!child._isTerminal, "The node is already terminal");
+                                child._isTerminal = true;
+                                child._order = order;
+                            }
+                            else
+                            {
+                                child.AddNode(patternGroup, order, startIndex);
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                // If we still have patterns we must add a new node and then gather those patterns
+                // Otherwise we add a terminal node
+                // We use > instead of == due to DELIMITER length ((startIndex - 1) == patternGroup.Length)
+                if (startIndex > patternGroup.Length)
+                {
+                    // At this point there are no more patterns to add
+                    _nodes.Add(new Node(pattern, order));
+                }
+                else
+                {
+                    // At this point there are additional patterns to add
+                    var node = new Node(pattern);
+                    _nodes.Add(node);
+                    node.AddNode(patternGroup, order, startIndex);
+                }
+            }
+
+            protected static ReadOnlyMemory<char> GetPattern(ReadOnlyMemory<char> patternGroup, int startIndex)
+            {
+                // We extract a pattern from the patternGroup
+                // Example:
+                // System.Collection.Generic.*
+                //       ^          ^
+                //       |^^^^^^^^^^|
+                //       |       |  |
+                //   startIndex  |  |
+                //       |   pattern|
+                //       |-----> DELIMITER
+
+                var patternGroupSpan = patternGroup.Span;
+                var i = startIndex;
+                for (; i < patternGroup.Length && patternGroupSpan[i] != DELIMITER; i++)
+                    ;
+                return patternGroup[startIndex..i];
+            }
         }
     }
 }
