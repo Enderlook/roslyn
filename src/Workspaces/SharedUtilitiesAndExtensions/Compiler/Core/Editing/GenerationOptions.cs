@@ -24,6 +24,12 @@ namespace Microsoft.CodeAnalysis.Editing
                 EditorConfigStorageLocation.ForBoolOption("dotnet_separate_import_directive_groups"),
                 new RoamingProfileStorageLocation($"TextEditor.%LANGUAGE%.Specific.{nameof(SeparateImportDirectiveGroups)}")});
 
+        public static readonly PerLanguageOption2<DirectivesCustomOrder> ImportDirectivesCustomOrder = new PerLanguageOption2<DirectivesCustomOrder>(
+            nameof(GenerationOptions), CodeStyleOptionGroups.Usings, nameof(ImportDirectivesCustomOrder), defaultValue: null,
+            storageLocations: new OptionStorageLocation2[] {
+                new EditorConfigStorageLocation<DirectivesCustomOrder>("dotnet_import_directives_order", DirectivesCustomOrder.Parse, DirectivesCustomOrder.Serialize),
+                new RoamingProfileStorageLocation($"TextEditor.%LANGUAGE%.Specific.{nameof(ImportDirectivesCustomOrder)}")});
+
         public static readonly ImmutableArray<IOption2> AllOptions = ImmutableArray.Create<IOption2>(
             PlaceSystemNamespaceFirst,
             SeparateImportDirectiveGroups);
