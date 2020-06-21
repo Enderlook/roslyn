@@ -17,6 +17,128 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
     [UseExportProvider]
     public class OrganizeUsingsTests
     {
+        [Fact]
+        public void DirectivesCustomOrderParse()
+        {
+            const string MUST_WORK = "Should accept ";
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                ""
+                ).HasValue, MUST_WORK + "empty."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "*"
+                ).HasValue, MUST_WORK + "only JOKER."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System"
+                ).HasValue, MUST_WORK + "single namespace."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System.Collection.Generic"
+                ).HasValue, MUST_WORK + "compound namespace."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System.Collection;Xamarin;Windows"
+                ).HasValue, MUST_WORK + "multiples namespaces."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "     System"
+                ).HasValue, MUST_WORK + "leading whitespace."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System     "
+                ).HasValue, MUST_WORK + "trailing whitespace."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System;    Xamarin;Windows"
+                ).HasValue, MUST_WORK + "leading whitespace between pattern groups."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System;Xamarin    ;Windows"
+                ).HasValue, MUST_WORK + "trailing whitespace between pattern groups."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System;"
+                ).HasValue, MUST_WORK + "optional SEPARATOR at the end."
+            );
+        }
+
+        [Fact]
+        public void DirectivesCustomOrderFailedParse()
+        {
+            const string MUST_FAIL = "Should not parse if ";
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Xamarin;Microsoft.CodeAnalysis     "
+                //                             ^^^^^^^                                         ^^^^^^^
+                ).HasValue, MUST_FAIL + "there are duplicates."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.Generic;Xamarin;;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                                    ^^
+                ).HasValue, MUST_FAIL + "the is an empty pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.Generic; ;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                             ^
+                ).HasValue, MUST_FAIL + "there is a whitespaces-only pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.Generic;Xam*arin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                                ^
+                ).HasValue, MUST_FAIL + "a JOKER is inside a pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Coll*ection.Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //              ^
+                ).HasValue, MUST_FAIL + "a JOKER is inside a pattern."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.*.Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                     ^
+                ).HasValue, MUST_FAIL + "a JOKER is used as a pattern inside a pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection..Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                    ^^
+                ).HasValue, MUST_FAIL + "there is an empty pattern in a pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection. .Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                     ^
+                ).HasValue, MUST_FAIL + "there is a whitespace-only pattern in a pattern group."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    Sy stem.Collection.Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //     ^
+                ).HasValue, MUST_FAIL + "whitespace inside a pattern."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                "    System.Collection.Generic;Xam arin;  Microsoft;System.Collection;Windows;*;Microsoft.CodeAnalysis     "
+                //                                ^
+                ).HasValue, MUST_FAIL + "whitespace inside a pattern group."
+            );
+        }
+
         protected static async Task CheckAsync(
             string initial, string final,
             bool placeSystemNamespaceFirst = false,
