@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Editing;
@@ -18,6 +19,28 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
     public class OrganizeUsingsTests
     {
         [Fact]
+        public void DirectivesCustomOrderGroupUnmatched()
+        {
+            const string GroupUnmatchesFieldName = "groupUnmatches";
+            var fieldInfo = typeof(DirectivesCustomOrder).GetField(GroupUnmatchesFieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.True((bool)fieldInfo.GetValue(DirectivesCustomOrder.Parse(
+                ""
+                ).Value), "If no joker pattern is specified, " + GroupUnmatchesFieldName + " member must be true."
+            );
+
+            Assert.True((bool)fieldInfo.GetValue(DirectivesCustomOrder.Parse(
+                "**"
+                ).Value), "If a double joker pattern is specified, " + GroupUnmatchesFieldName + " member must be true."
+            );
+
+            Assert.False((bool)fieldInfo.GetValue(DirectivesCustomOrder.Parse(
+                "*"
+                ).Value), "If a single joker pattern is specified, " + GroupUnmatchesFieldName + " member must be false."
+            );
+        }
+
+        [Fact]
         public void DirectivesCustomOrderParse()
         {
             const string MUST_WORK = "Should accept ";
@@ -30,6 +53,11 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
             Assert.True(DirectivesCustomOrder.Parse(
                 "*"
                 ).HasValue, MUST_WORK + "only JOKER."
+            );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+               "**"
+               ).HasValue, MUST_WORK + "only double JOKER."
             );
 
             Assert.True(DirectivesCustomOrder.Parse(
@@ -82,6 +110,12 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
                 "    System.Collection.Generic;Xamarin;  Microsoft;System.Collection;Windows;*;Xamarin;Microsoft.CodeAnalysis     "
                 //                             ^^^^^^^                                         ^^^^^^^
                 ).HasValue, MUST_FAIL + "there are duplicates."
+            );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+               "    System.Collection.Generic;Xamarin;**;  Microsoft;System.Collection;Windows;*;Xamarin;Microsoft.CodeAnalysis     "
+               //                                     ^^                                       ^
+               ).HasValue, MUST_FAIL + "there are two jokes, one double the other single."
             );
 
             Assert.True(!DirectivesCustomOrder.Parse(

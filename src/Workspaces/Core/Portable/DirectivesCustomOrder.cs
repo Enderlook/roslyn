@@ -17,6 +17,11 @@ namespace Microsoft.CodeAnalysis.Editing
         private const char JOKER = '*';
 
         /// <summary>
+        /// Twice <see cref="JOKER"/>
+        /// </summary>
+        private readonly string DOUBLE_JOKER = JOKER.ToString() + JOKER.ToString();
+
+        /// <summary>
         /// Pattern used to split names.
         /// </summary>
         private const char DELIMITER = '.';
@@ -26,19 +31,47 @@ namespace Microsoft.CodeAnalysis.Editing
         /// </summary>
         private const char SEPARATOR = ';';
 
-        private Node node;
+        private Node node = new Node();
+
+        /// <summary>
+        /// On <see langword="true"/>, unmatched namespaces are grouped based on the first <c>pattern</c> (as described by comments in <see cref="ProcessImportDirectivesCustomOrder(ReadOnlyMemory{char})"/>).<br/>
+        /// This is useful when <see cref="GenerationOptions.SeparateImportDirectiveGroups"/> is <see langword="true"/>.<br/>
+        /// <example>
+        /// If <see cref="groupUnmatches"/> and <see cref="GenerationOptions.SeparateImportDirectiveGroups"/> are <see langword="true"/>:
+        /// <code>
+        /// System.Collections<br/>
+        /// System.Data<br/>
+        /// <br/>
+        /// Microsoft.Windows<br/>
+        /// <br/>
+        /// Newtownsoft.Json<br/>
+        /// <br/>
+        /// Xamarin<br/>
+        /// Xamarin.Forms
+        /// </code>
+        /// <br/>
+        /// If <see cref="groupUnmatches"/> is <see langword="false"/> and <see cref="GenerationOptions.SeparateImportDirectiveGroups"/> is <see langword="true"/>:
+        /// <code>
+        /// System.Collections<br/>
+        /// System.Data<br/>
+        /// Microsoft.Windows<br/>
+        /// Newtownsoft.Json<br/>
+        /// Xamarin<br/>
+        /// Xamarin.Forms
+        /// </code>
+        /// </example>
+        /// </summary>
+        /// <remark>Keep name in sync with tests.</remark>
+        private bool groupUnmatches;
 
         internal static Optional<DirectivesCustomOrder> Parse(string args)
         {
-            var patterns = ProcessImportDirectivesCustomOrder(args.AsMemory());
+            var configuration = new DirectivesCustomOrder();
+
+            var patterns = configuration.ProcessImportDirectivesCustomOrder(args.AsMemory());
 
             if (patterns is null)
                 return new Optional<DirectivesCustomOrder>();
-
-            var configuration = new DirectivesCustomOrder
-            {
-                node = new Node()
-            };
 
             foreach (var kv in patterns)
             {
@@ -48,12 +81,13 @@ namespace Microsoft.CodeAnalysis.Editing
             return new Optional<DirectivesCustomOrder>(configuration);
         }
 
-        private static PooledDictionary<string, int> ProcessImportDirectivesCustomOrder(ReadOnlyMemory<char> importDirectivesCustomOrder)
+        private PooledDictionary<string, int> ProcessImportDirectivesCustomOrder(ReadOnlyMemory<char> importDirectivesCustomOrder)
         {
             // Note: for the purpose of the documentation of this method and its examples
             // we consider that JOKER is '*', DELIMITER is '.' and SEPARATOR is ';'.
             //
-            // A joker pattern is a pattern which only contains JOKER, such as "*"
+            // A joker pattern is a pattern which only contains JOKER, such as "*". This pattern can contain either 1 or 2 JOKER.
+            // Only one joker pattern can be used at the same time.
             //
             // Additionally, an input configuration can be split in the following parts (EBNF):
             // patternGroup = name, {DELIMITER, name}
@@ -87,10 +121,10 @@ namespace Microsoft.CodeAnalysis.Editing
             //
             // Whitespaces are defined by char.IsWhiteSpace(character)
             //
-            // If the joker pattern is not found, we must add it to the end
+            // If the joker pattern is not found, we must add a double joker pattern to the end
             // Example:
-            // "System" -> "System;*"
-            // "System ; Microsoft ; Windows" -> "System ; Microsoft ; Windows;*"
+            // "System" -> "System;**"
+            // "System ; Microsoft ; Windows" -> "System ; Microsoft ; Windows;**"
 
             var patterns = PooledDictionary<string, int>.GetInstance();
 
@@ -102,6 +136,8 @@ namespace Microsoft.CodeAnalysis.Editing
 
             // Whenever a joker pattern was found in the user provided configuration
             var foundJoker = false;
+
+            var doubleJokerSpan = DOUBLE_JOKER.AsSpan();
 
             for (var i = 0; i < importDirectivesCustomOrderSpan.Length; i++)
             {
@@ -119,10 +155,26 @@ namespace Microsoft.CodeAnalysis.Editing
                     pattern = importDirectivesCustomOrder.Slice(startIndex, length);
                     var patternSpan = pattern.Span;
 
-                    // Check if it's a joker pattern
+                    // Check if it's a ungrouped joker pattern
                     if (patternSpan.Length == 1 && patternSpan[0] == JOKER)
                     {
+                        // No pattern can be twice. Usually this is handled bellow with a Dictionary,
+                        // but since there are two variations of joker (single and double JOKER)
+                        // we must check it here
+                        if (foundJoker)
+                            return null;
                         foundJoker = true;
+                    }
+                    // Check if it's a grouped joker pattern
+                    else if (patternSpan.Length == 2 && patternSpan.SequenceEqual(doubleJokerSpan))
+                    {
+                        // No pattern can be twice. Usually this is handled bellow with a Dictionary,
+                        // but since there are two variations of joker (single and double JOKER)
+                        // we must check it here
+                        if (foundJoker)
+                            return null;
+                        foundJoker = true;
+                        groupUnmatches = true;
                     }
                     else
                     {
@@ -202,9 +254,10 @@ namespace Microsoft.CodeAnalysis.Editing
             // If not joker pattern was found we add one
             if (!foundJoker)
             {
-                // If that pattern isn't found, we add it.
+                // If that pattern isn't found, we add an grouped joker pattern.
                 // This will have a higher order than the last pattern, which means it will go to the bottom.
-                patterns.Add(JOKER.ToString(), order);
+                patterns.Add(doubleJokerSpan.ToString(), order);
+                groupUnmatches = true;
             }
 
             Debug.Assert(patterns.Count > 0, "Patterns can't be empty.");
