@@ -171,6 +171,12 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
                 //                                ^
                 ).HasValue, MUST_FAIL + "whitespace inside a pattern group."
             );
+
+            Assert.True(!DirectivesCustomOrder.Parse(
+                 " "
+                //^
+                ).HasValue, MUST_FAIL + "only whitespace."
+            );
         }
 
         protected static async Task CheckAsync(
