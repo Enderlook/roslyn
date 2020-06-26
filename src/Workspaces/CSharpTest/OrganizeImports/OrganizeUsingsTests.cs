@@ -99,6 +99,11 @@ namespace Microsoft.CodeAnalysis.CSharp.Workspaces.UnitTests.OrganizeImports
                 "System;"
                 ).HasValue, MUST_WORK + "optional SEPARATOR at the end."
             );
+
+            Assert.True(DirectivesCustomOrder.Parse(
+                "System;    "
+                ).HasValue, MUST_WORK + "optional SEPARATOR with whitespace at the end."
+            );
         }
 
         [Fact]

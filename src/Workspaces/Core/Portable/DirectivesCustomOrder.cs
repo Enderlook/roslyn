@@ -91,7 +91,7 @@ namespace Microsoft.CodeAnalysis.Editing
             //
             // Additionally, an input configuration can be split in the following parts (EBNF):
             // patternGroup = name, {DELIMITER, name}
-            // configuration = { whitespace }, [patternGroup], {{ whitespace }, SEPARATOR, { whitespace }, patternGroup}, { whitespace }
+            // configuration = { whitespace }, [patternGroup], {{ whitespace }, SEPARATOR, { whitespace }, patternGroup}, [SEPARATOR] { whitespace }
             // Examples:
             // "  System;Microsoft.Xyz;Microsoft;*;Xamarin"
             // "System  ;  Microsoft.Xyz  ;  Microsoft  ;  *  ;  Xamarin"
@@ -163,7 +163,25 @@ namespace Microsoft.CodeAnalysis.Editing
             {
                 if (!ParsePatternGroup(doubleJokerSpan))
                 {
-                    return null;
+                    // The last pattern has an exception
+                    // It's the only pattern which can be entirely made of whitespaces
+                    // So if this pattern group only has whitespaces we allow it.
+                    // Example:
+                    // "System ; Microsoft ; Windows;  "
+
+                    // However, a custom order which only contains whitespaces is not allowed, so we also check that
+                    // Example
+                    // "   "
+                    if (patterns.Count == 0)
+                        return null;
+
+                    for (var j = startIndex; j < i; j++)
+                    {
+                        if (!char.IsWhiteSpace(importDirectivesCustomOrderSpan[j]))
+                        {
+                            return null;
+                        }
+                    }
                 }
             }
 
