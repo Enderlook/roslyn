@@ -177,6 +177,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)CodeStyle\ParenthesesPreference.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Collections\SegmentedArrayHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Collections\SegmentedArray`1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Editing\DirectivesCustomOrder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EmbeddedLanguages\Common\EmbeddedDiagnostic.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EmbeddedLanguages\Common\EmbeddedSyntaxHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EmbeddedLanguages\Common\EmbeddedSyntaxNode.cs" />
